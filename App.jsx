@@ -233,7 +233,7 @@ const SAMPLE_MINES = [
 ];
 
 const AUTO_FIELDS = ["광산명 · 소재지 (KOMIR)", "광종"];
-const PENDING_FIELDS = ["좌표 (VWorld 지오코딩 필요)", "갱내 상시온도 (좌표 확보 후 기상청 조회)"];
+const PENDING_FIELDS = ["좌표 (VWorld 지오코딩 필요)", "지상 기온 (좌표 확보 후 기상청 조회 · 갱내온도 아님)"];
 const MANUAL_FIELDS = ["암반등급(RMR)", "라돈농도", "산소농도", "변전소 거리", "전력 용량", "지반침하·단층 이력", "진입로 상태", "인허가 상태"];
 
 const PRESET_A = {
@@ -548,7 +548,7 @@ export default function MineDataCenterEvaluator() {
                     value={fetchedCoords ? `${fetchedCoords.lat.toFixed(4)}, ${fetchedCoords.lon.toFixed(4)}` : null}
                   />
                   <StatusRow
-                    label="갱내 상시온도 (기상청, 지상값 대용)"
+                    label="지상 기온 (기상청 · 갱내온도 아님, 참고용)"
                     status={weatherStatus}
                     value={weatherStatus === "done" ? `${s.temp}℃ 로 자동 반영됨` : null}
                   />
@@ -586,8 +586,13 @@ export default function MineDataCenterEvaluator() {
 
             <Divider />
             <SectionHeader num="02" icon={<Thermometer size={16} color={C.amber} />} title="환경 조건" weight="20%" />
-            <Slider label="갱내 상시온도" value={s.temp} onChange={set("temp")} min={5} max={35} step={0.5} unit="℃"
-              source="Chung et al.(1998); Chang(2018)" />
+            <Slider label="지상 연평균 기온 (갱내온도 아님)" value={s.temp} onChange={set("temp")} min={5} max={35} step={0.5} unit="℃"
+              source="기상청 (지상 관측값)" />
+            <div style={{ fontSize: 10.5, color: C.amber, marginTop: -8, marginBottom: 16, lineHeight: 1.6 }}>
+              ⚠ 이 값은 지상 기온입니다. 실제 갱내 온도는 지표 계절변화 영향을 거의 안 받고
+              연중 14℃ 안팎으로 일정하게 유지되는 경향이 있습니다(Chung et al., 1998, 지하 25m 기준).
+              정확한 판단을 위해서는 실측값으로 직접 수정해주세요.
+            </div>
             <Slider label="라돈 농도" value={s.radon} onChange={set("radon")} min={0} max={300} step={5} unit=" Bq/㎥"
               source="실내공기질 관리법(환경부)" />
             <Slider label="산소 농도" value={s.o2} onChange={set("o2")} min={10} max={25} step={0.1} unit="%"
