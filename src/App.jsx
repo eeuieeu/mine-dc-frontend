@@ -266,6 +266,7 @@ export default function MineDataCenterEvaluator() {
   const [geoStatus, setGeoStatus] = useState("idle"); // idle|loading|done|error|offline
   const [weatherStatus, setWeatherStatus] = useState("idle");
   const [fetchedCoords, setFetchedCoords] = useState(null);
+  const [surfaceTemp, setSurfaceTemp] = useState(null); // 참고용 지상 기온 — 점수 계산에는 사용 안 함
 
   const set = (k) => (v) => setS((prev) => ({ ...prev, [k]: v }));
   const onWeightChange = (key, val) => setWeights((prev) => redistributeWeights(prev, key, val));
@@ -304,6 +305,7 @@ export default function MineDataCenterEvaluator() {
     setQuery(mine.name);
     setMineResults([]);
     setFetchedCoords(null);
+    setSurfaceTemp(null);
     setWeatherStatus("idle");
 
     if (backendOnline === false) { setGeoStatus("offline"); return; }
@@ -323,7 +325,12 @@ export default function MineDataCenterEvaluator() {
       if (!w.ok) throw new Error("weather_not_ok");
       const wd = await w.json();
       if (wd.temperatureC != null) {
-        setS((prev) => ({ ...prev, temp: wd.temperatureC }));
+        // ⚠ 의도적으로 s.temp(점수 계산용 슬라이더)에는 반영하지 않음.
+        // 지상 기온은 계절에 따라 크게 변해서, 그대로 점수에 넣으면
+        // 조회 시점(여름/겨울)에 따라 같은 광산의 점수가 달라지는
+        // 문제가 생긴다. 참고 정보로만 별도 표시하고, 실제 갱내온도
+        // 슬라이더는 사용자가 직접 판단해서 입력하도록 둔다.
+        setSurfaceTemp(wd.temperatureC);
         setWeatherStatus("done");
       } else {
         setWeatherStatus("error");
@@ -543,14 +550,14 @@ export default function MineDataCenterEvaluator() {
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 10 }}>
                   <StatusRow
-                    label="좌표 (VWorld 지오코딩)"
+                    label="좌표 (Kakao 지오코딩)"
                     status={geoStatus}
                     value={fetchedCoords ? `${fetchedCoords.lat.toFixed(4)}, ${fetchedCoords.lon.toFixed(4)}` : null}
                   />
                   <StatusRow
-                    label="지상 기온 (기상청 · 갱내온도 아님, 참고용)"
+                    label="지상 기온 (기상청 · 참고용, 점수 미반영)"
                     status={weatherStatus}
-                    value={weatherStatus === "done" ? `${s.temp}℃ 로 자동 반영됨` : null}
+                    value={weatherStatus === "done" ? `${surfaceTemp}℃ (아래 슬라이더는 직접 판단 필요)` : null}
                   />
                 </div>
 
@@ -586,12 +593,14 @@ export default function MineDataCenterEvaluator() {
 
             <Divider />
             <SectionHeader num="02" icon={<Thermometer size={16} color={C.amber} />} title="환경 조건" weight="20%" />
-            <Slider label="지상 연평균 기온 (갱내온도 아님)" value={s.temp} onChange={set("temp")} min={5} max={35} step={0.5} unit="℃"
-              source="기상청 (지상 관측값)" />
+            <Slider label="갱내 추정 온도 (점수 계산에 사용됨)" value={s.temp} onChange={set("temp")} min={5} max={35} step={0.5} unit="℃"
+              source="직접 입력 · 문헌상 갱내 평균 약 14℃(지하 25m 기준)" />
             <div style={{ fontSize: 10.5, color: C.amber, marginTop: -8, marginBottom: 16, lineHeight: 1.6 }}>
-              ⚠ 이 값은 지상 기온입니다. 실제 갱내 온도는 지표 계절변화 영향을 거의 안 받고
-              연중 14℃ 안팎으로 일정하게 유지되는 경향이 있습니다(Chung et al., 1998, 지하 25m 기준).
-              정확한 판단을 위해서는 실측값으로 직접 수정해주세요.
+              ⚠ 위 검색으로 자동 조회되는 "지상 기온"은 참고용일 뿐, 이 슬라이더에 자동으로 반영되지 않습니다.
+              지상 기온은 계절마다 크게 변해서 그대로 점수에 넣으면 조회 시점에 따라 같은 광산의
+              점수가 달라지는 문제가 생기기 때문입니다. 실제 갱내 온도는 지표 계절변화 영향을 거의 안 받고
+              연중 14℃ 안팎으로 일정한 경향이 있으니(Chung et al., 1998), 실측값이나 이 추정치를 기준으로
+              직접 판단해서 입력해주세요.
             </div>
             <Slider label="라돈 농도" value={s.radon} onChange={set("radon")} min={0} max={300} step={5} unit=" Bq/㎥"
               source="실내공기질 관리법(환경부)" />
