@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Mountain, Thermometer, Zap, TriangleAlert, FileCheck2, RotateCcw,
   ChevronDown, Info, SlidersHorizontal, CircleCheck, CircleAlert,
-  Search, MapPin, Sparkles, PencilLine, Loader2, WifiOff,
+  Search, MapPin, Sparkles, PencilLine, Loader2, WifiOff, Coins,
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -234,26 +234,31 @@ const SAMPLE_MINES = [
 
 const AUTO_FIELDS = ["광산명 · 소재지 (KOMIR)", "광종"];
 const PENDING_FIELDS = ["좌표 (VWorld 지오코딩 필요)", "지상 기온 (좌표 확보 후 기상청 조회 · 갱내온도 아님)"];
-const MANUAL_FIELDS = ["암반등급(RMR)", "라돈농도", "산소농도", "변전소 거리", "전력 용량", "지반침하·단층 이력", "진입로 상태", "인허가 상태"];
+const MANUAL_FIELDS = ["암반등급(RMR)", "라돈농도", "산소농도", "변전소 거리", "전력 용량", "지반침하·단층 이력", "진입로 상태", "사업성 검토·투자회수기간", "인허가 상태"];
 
 const PRESET_A = {
   rmr: 72, temp: 18.5, radon: 60, o2: 20.6,
   distance: 3, capacity: 12, required: 5,
   subsidence: false, faultNear: false, activeFault: false,
   road: "good", permit: "confirmed",
+  feasibility: "done", payback: 8,
 };
 const PRESET_B = {
   rmr: 35, temp: 24, radon: 130, o2: 19.8,
   distance: 15, capacity: 4, required: 5,
   subsidence: true, faultNear: true, activeFault: false,
   road: "fair", permit: "pending",
+  feasibility: "none", payback: 18,
 };
 const DEFAULT = PRESET_A;
 
 /* ---------------------------------------------------------
    MAIN COMPONENT
+   기본 가중치 출처: AHP 쌍대비교 — 2개 AI(ChatGPT·Claude) ×
+   4개 전문가 페르소나 = 8개 응답(전원 CR<0.1)의 기하평균 집계.
+   최종 확정 전 실제 전문가 설문 검증 필요.
 --------------------------------------------------------- */
-const DEFAULT_WEIGHTS = { structure: 30, env: 20, power: 25, risk: 15, access: 10 };
+const DEFAULT_WEIGHTS = { ground: 36, infra: 25, env: 17, econ: 14, permit: 8 };
 
 export default function MineDataCenterEvaluator() {
   const [s, setS] = useState(DEFAULT);
@@ -354,55 +359,61 @@ export default function MineDataCenterEvaluator() {
 
     const disqualified = reasons.length > 0;
 
-    // ---- Stage 2: 가중치 스코어링 (통과 항목만 의미 있음) ----
-    const structureScore = Math.max(0, Math.min(100, s.rmr));
+    // ---- Stage 2: 가중치 스코어링 — 새 5기준 체계 (AHP 기반) ----
+    // ① 지반 안정성: RMR + 지반침하/단층 이력 감점 (기존 '리스크' 항목 흡수)
+    const rmrScore = Math.max(0, Math.min(100, s.rmr));
+    const groundScore = Math.max(0, rmrScore - (s.subsidence ? 25 : 0) - (s.faultNear ? 20 : 0));
 
+    // ② 인프라: 변전소 거리 + 전력용량 + 진입로 (기존 '접근성'의 진입로 흡수)
+    const distScore = Math.max(0, Math.min(100, 100 - s.distance * 4));
+    const capScore = s.required > 0 ? Math.max(0, Math.min(100, (s.capacity / s.required) * 100)) : 100;
+    const roadMap = { good: 100, fair: 60, poor: 20 };
+    const infraScore = distScore * 0.45 + capScore * 0.35 + roadMap[s.road] * 0.2;
+
+    // ③ 환경성: 갱내 추정온도 + 라돈 (산소는 결격필터에서만 사용)
     const tempScore = Math.max(0, 100 - Math.abs(s.temp - 20.5) * 8);
     const radonScore = Math.max(0, Math.min(100, 100 * (1 - s.radon / 148)));
     const envScore = (tempScore + radonScore) / 2;
 
-    const distScore = Math.max(0, Math.min(100, 100 - s.distance * 4));
-    const capScore = s.required > 0 ? Math.max(0, Math.min(100, (s.capacity / s.required) * 100)) : 100;
-    const powerScore = distScore * 0.6 + capScore * 0.4;
+    // ④ 경제성: 사업성 검토 상태 + 예상 투자회수기간 (신규 기준)
+    const feasMap = { done: 100, rough: 60, none: 30 };
+    const paybackScore = Math.max(0, Math.min(100, ((25 - s.payback) / 20) * 100));
+    const econScore = feasMap[s.feasibility] * 0.5 + paybackScore * 0.5;
 
-    let riskScore = 100;
-    if (s.subsidence) riskScore -= 35;
-    if (s.faultNear) riskScore -= 25;
-    riskScore = Math.max(0, riskScore);
-
-    const roadMap = { good: 100, fair: 60, poor: 20 };
+    // ⑤ 인허가: 광업권·소유권 상태
     const permitMap = { confirmed: 100, pending: 55, unresolved: 0 };
-    const accessScore = (roadMap[s.road] + permitMap[s.permit]) / 2;
+    const permitScore = permitMap[s.permit];
 
     const w = {
-      structure: weights.structure / 100, env: weights.env / 100, power: weights.power / 100,
-      risk: weights.risk / 100, access: weights.access / 100,
+      ground: weights.ground / 100, infra: weights.infra / 100, env: weights.env / 100,
+      econ: weights.econ / 100, permit: weights.permit / 100,
     };
-    const subscores = { structure: structureScore, env: envScore, power: powerScore, risk: riskScore, access: accessScore };
+    const subscores = { ground: groundScore, infra: infraScore, env: envScore, econ: econScore, permit: permitScore };
     const total =
-      structureScore * w.structure +
+      groundScore * w.ground +
+      infraScore * w.infra +
       envScore * w.env +
-      powerScore * w.power +
-      riskScore * w.risk +
-      accessScore * w.access;
+      econScore * w.econ +
+      permitScore * w.permit;
 
     const gradeOf = (v) =>
       (GRADE_BANDS.find((b) => v >= b.min && (v <= b.max || b.max === 100)) || GRADE_BANDS[0]).grade;
 
-    // ---- 민감도 분석: 대안 가중치 시나리오 비교 ----
+    // ---- 민감도 분석: AHP 개별 페르소나 관점 시나리오 ----
+    // (각 시나리오 = 실제 AHP 쌍대비교에서 산출된 페르소나별 가중치)
     const scenarioDefs = [
-      { name: "현재 설정", w: weights },
-      { name: "균등 가중", w: { structure: 20, env: 20, power: 20, risk: 20, access: 20 } },
-      { name: "구조·전력 중심", w: { structure: 35, env: 15, power: 35, risk: 10, access: 5 } },
-      { name: "리스크 보수적", w: { structure: 25, env: 15, power: 15, risk: 35, access: 10 } },
+      { name: "AHP 종합 (현재 설정)", w: weights },
+      { name: "지반공학 전문가 관점", w: { ground: 58, infra: 16, env: 13, econ: 8, permit: 5 } },
+      { name: "전력·운영 전문가 관점", w: { ground: 16, infra: 47, env: 10, econ: 21, permit: 6 } },
+      { name: "CM 전문가 관점", w: { ground: 16, infra: 13, env: 9, econ: 37, permit: 25 } },
     ];
     const scenarios = scenarioDefs.map((sc) => {
       const t =
-        subscores.structure * (sc.w.structure / 100) +
+        subscores.ground * (sc.w.ground / 100) +
+        subscores.infra * (sc.w.infra / 100) +
         subscores.env * (sc.w.env / 100) +
-        subscores.power * (sc.w.power / 100) +
-        subscores.risk * (sc.w.risk / 100) +
-        subscores.access * (sc.w.access / 100);
+        subscores.econ * (sc.w.econ / 100) +
+        subscores.permit * (sc.w.permit / 100);
       return { name: sc.name, total: t, grade: gradeOf(t) };
     });
     const uniqueGrades = new Set(scenarios.map((x) => x.grade));
@@ -417,11 +428,11 @@ export default function MineDataCenterEvaluator() {
     return {
       disqualified, reasons, total, scenarios, isStable, margin,
       breakdown: [
-        { label: "구조 안전성", score: structureScore, weight: w.structure },
-        { label: "환경 조건", score: envScore, weight: w.env },
-        { label: "전력 접근성", score: powerScore, weight: w.power },
-        { label: "리스크", score: riskScore, weight: w.risk },
-        { label: "접근성/인허가", score: accessScore, weight: w.access },
+        { label: "지반 안정성", score: groundScore, weight: w.ground },
+        { label: "인프라", score: infraScore, weight: w.infra },
+        { label: "환경성", score: envScore, weight: w.env },
+        { label: "경제성", score: econScore, weight: w.econ },
+        { label: "인허가", score: permitScore, weight: w.permit },
       ],
     };
   }, [s, weights]);
@@ -584,15 +595,26 @@ export default function MineDataCenterEvaluator() {
           <div style={{ height: 18 }} />
 
           <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: "20px 22px" }}>
-            <SectionHeader num="01" icon={<Mountain size={16} color={C.amber} />} title="구조 안전성" weight="30%" />
+            <SectionHeader num="01" icon={<Mountain size={16} color={C.amber} />} title="지반 안정성" weight="36%" />
             <Slider label="암반등급 (RMR)" value={s.rmr} onChange={set("rmr")} min={0} max={100} unit="점"
               source="Bieniawski(1989)" />
             <div style={{ fontSize: 11, color: C.textFaint, marginTop: -8, marginBottom: 16 }}>
               20 미만 = 결격(Class V) · 61 이상 = 양호(Class I·II)
             </div>
+            <Check label="지반침하 이력 있음 (-25점)" checked={s.subsidence} onChange={set("subsidence")} />
+            <Check label="단층대 인접 (-20점)" checked={s.faultNear} onChange={set("faultNear")} />
+            <Check label="활성 단층대 직상부 (결격 사유)" checked={s.activeFault} onChange={set("activeFault")} danger />
 
             <Divider />
-            <SectionHeader num="02" icon={<Thermometer size={16} color={C.amber} />} title="환경 조건" weight="20%" />
+            <SectionHeader num="02" icon={<Zap size={16} color={C.amber} />} title="인프라 (전력·통신·접근로)" weight="25%" />
+            <Slider label="변전소 거리" value={s.distance} onChange={set("distance")} min={0} max={30} unit=" km" />
+            <Slider label="가용 전력 용량" value={s.capacity} onChange={set("capacity")} min={0} max={30} unit=" MW" />
+            <Slider label="필요 전력 용량" value={s.required} onChange={set("required")} min={1} max={20} unit=" MW" />
+            <Select label="진입로 상태" value={s.road} onChange={set("road")}
+              options={[{ value: "good", label: "양호 (모듈러 반입 가능)" }, { value: "fair", label: "보통 (보강 필요)" }, { value: "poor", label: "불량" }]} />
+
+            <Divider />
+            <SectionHeader num="03" icon={<Thermometer size={16} color={C.amber} />} title="환경성 (온도·공기질)" weight="17%" />
             <Slider label="갱내 추정 온도 (점수 계산에 사용됨)" value={s.temp} onChange={set("temp")} min={5} max={35} step={0.5} unit="℃"
               source="직접 입력 · 문헌상 갱내 평균 약 14℃(지하 25m 기준)" />
             <div style={{ fontSize: 10.5, color: C.amber, marginTop: -8, marginBottom: 16, lineHeight: 1.6 }}>
@@ -608,21 +630,14 @@ export default function MineDataCenterEvaluator() {
               source="산업안전보건기준에 관한 규칙 제618조" />
 
             <Divider />
-            <SectionHeader num="03" icon={<Zap size={16} color={C.amber} />} title="전력 접근성" weight="25%" />
-            <Slider label="변전소 거리" value={s.distance} onChange={set("distance")} min={0} max={30} unit=" km" />
-            <Slider label="가용 전력 용량" value={s.capacity} onChange={set("capacity")} min={0} max={30} unit=" MW" />
-            <Slider label="필요 전력 용량" value={s.required} onChange={set("required")} min={1} max={20} unit=" MW" />
+            <SectionHeader num="04" icon={<Coins size={16} color={C.amber} />} title="경제성 (투자·수익성)" weight="14%" />
+            <Select label="사업 타당성 검토 상태" value={s.feasibility} onChange={set("feasibility")}
+              options={[{ value: "done", label: "타당성조사 완료" }, { value: "rough", label: "개략 검토만 수행" }, { value: "none", label: "미검토" }]} />
+            <Slider label="예상 투자회수기간" value={s.payback} onChange={set("payback")} min={5} max={25} unit="년"
+              source="사업계획 기반 추정치 직접 입력" />
 
             <Divider />
-            <SectionHeader num="04" icon={<TriangleAlert size={16} color={C.amber} />} title="리스크" weight="15%" />
-            <Check label="지반침하 이력 있음" checked={s.subsidence} onChange={set("subsidence")} />
-            <Check label="단층대 인접 (근접 위험)" checked={s.faultNear} onChange={set("faultNear")} />
-            <Check label="활성 단층대 직상부 (결격 사유)" checked={s.activeFault} onChange={set("activeFault")} danger />
-
-            <Divider />
-            <SectionHeader num="05" icon={<FileCheck2 size={16} color={C.amber} />} title="접근성 / 인허가" weight="10%" />
-            <Select label="진입로 상태" value={s.road} onChange={set("road")}
-              options={[{ value: "good", label: "양호 (모듈러 반입 가능)" }, { value: "fair", label: "보통 (보강 필요)" }, { value: "poor", label: "불량" }]} />
+            <SectionHeader num="05" icon={<FileCheck2 size={16} color={C.amber} />} title="인허가" weight="8%" />
             <Select label="광업권 · 소유권 상태" value={s.permit} onChange={set("permit")}
               options={[{ value: "confirmed", label: "확정" }, { value: "pending", label: "협의 중" }, { value: "unresolved", label: "미확정 (결격 사유)" }]} />
 
@@ -638,18 +653,18 @@ export default function MineDataCenterEvaluator() {
                 가중치 조정 (민감도 테스트)
               </span>
               <button onClick={resetWeights} style={{ ...btnStyle(true), padding: "4px 9px", fontSize: 11 }}>
-                기본값
+                AHP 기본값
               </button>
             </div>
             <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 14, lineHeight: 1.6 }}>
+              기본값은 AHP 쌍대비교(2개 AI × 4개 전문가 페르소나, 8개 응답 기하평균)로 산출된 값입니다.
               슬라이더를 옮기면 나머지 항목이 자동으로 비례 재조정되어 항상 합계 100%를 유지합니다.
-              이 값을 바꿔가며 우측 결과가 얼마나 민감하게 반응하는지 확인해보세요.
             </div>
-            <WeightSlider label="구조 안전성" keyName="structure" weights={weights} onChange={onWeightChange} />
-            <WeightSlider label="환경 조건" keyName="env" weights={weights} onChange={onWeightChange} />
-            <WeightSlider label="전력 접근성" keyName="power" weights={weights} onChange={onWeightChange} />
-            <WeightSlider label="리스크" keyName="risk" weights={weights} onChange={onWeightChange} />
-            <WeightSlider label="접근성/인허가" keyName="access" weights={weights} onChange={onWeightChange} />
+            <WeightSlider label="지반 안정성" keyName="ground" weights={weights} onChange={onWeightChange} />
+            <WeightSlider label="인프라" keyName="infra" weights={weights} onChange={onWeightChange} />
+            <WeightSlider label="환경성" keyName="env" weights={weights} onChange={onWeightChange} />
+            <WeightSlider label="경제성" keyName="econ" weights={weights} onChange={onWeightChange} />
+            <WeightSlider label="인허가" keyName="permit" weights={weights} onChange={onWeightChange} />
           </div>
           </div>
 
@@ -750,8 +765,7 @@ export default function MineDataCenterEvaluator() {
             }}>
               <Info size={14} color={C.textFaint} style={{ flexShrink: 0, marginTop: 1 }} />
               <div style={{ fontSize: 11, color: C.textFaint, lineHeight: 1.6 }}>
-                기본 가중치(구조30·환경20·전력25·리스크15·접근성10%)와 점수 환산식은 검증되지 않은 프로젝트팀 제안값입니다.
-                실제 적용 전 전문가 델파이 조사 또는 AHP 설문을 통한 보정이 필요합니다.
+                기본 가중치(지반36·인프라25·환경17·경제14·인허가8%)는 AHP 쌍대비교(ChatGPT·Claude 2개 AI × 4개 전문가 페르소나 = 8개 응답, 전원 일관성비율 CR&lt;0.1)의 기하평균으로 산출했습니다. 다만 AI 응답 기반 1차 추정치이므로 최종 확정 전 실제 전문가 설문 검증이 필요하며, 항목별 점수 환산식(정규화 공식)은 여전히 프로젝트팀 제안값입니다.
               </div>
             </div>
           </div>
