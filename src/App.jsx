@@ -458,7 +458,7 @@ export default function MineDataCenterEvaluator() {
             AI-ASSISTED SITE EVALUATION · STAGE 1–2
           </div>
           <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 26, margin: 0, letterSpacing: -0.3 }}>
-            폐광산 데이터센터 적합성 평가기
+            폐광산 데이터센터 적합성 평가
           </h1>
           <p style={{ color: C.textMuted, fontSize: 13.5, marginTop: 6, maxWidth: 620, lineHeight: 1.6 }}>
             좌측 값을 입력하면 결격 필터(Go/No-Go)와 가중치 스코어링이 실시간으로 계산됩니다.
